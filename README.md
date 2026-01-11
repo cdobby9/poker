@@ -15,7 +15,7 @@ uvicorn app.main:app --reload --port 8000
 
 ## Workflow:
 
-Daily workflow (both of you)
+Daily workflow
 Create a feature branch
 
 git checkout -b feature/ws-protocol
