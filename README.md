@@ -12,7 +12,6 @@ uvicorn app.main:app --reload --port 8000
 
 
 
-
 ## Workflow:
 
 Daily workflow (both of you)
@@ -36,3 +35,6 @@ git checkout main
 git pull
 git checkout feature/ws-protocol
 git merge main
+
+
+hello there
