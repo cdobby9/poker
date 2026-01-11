@@ -14,7 +14,7 @@ uvicorn app.main:app --reload --port 8000
 
 ## Workflow:
 
-Daily workflow (both of you)
+Daily workflow
 Create a feature branch
 
 git checkout -b feature/ws-protocol
@@ -35,8 +35,3 @@ git checkout main
 git pull
 git checkout feature/ws-protocol
 git merge main
-
-
-hello there
-git config --global user.email "stanl.xbxx@outlook.com"
-  git config --global user.name "jxbrz"
