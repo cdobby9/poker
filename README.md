@@ -35,8 +35,3 @@ git checkout main
 git pull
 git checkout feature/ws-protocol
 git merge main
-
-
-hello there
-git config --global user.email "stanl.xbxx@outlook.com"
-  git config --global user.name "jxbrz"
