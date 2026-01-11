@@ -1,6 +1,7 @@
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
+from pydantic import BaseModel
 
 app = FastAPI()
 
@@ -64,12 +65,10 @@ async def websocket_endpoint(websocket: WebSocket):
     while True:
         data = await websocket.receive_text()
         await websocket.send_text(f"Message text was: {data}")
-        
-# Simple in-memory table manager
 
+# Simple in-memory table manager
 class TableManager:
     def __init__(self):
-        # { table_name: {"columns": [...], "rows": [ {...}, {...} ] } }
         self.tables = {}
 
     def create_table(self, name, columns):
@@ -87,17 +86,14 @@ class TableManager:
 
     def insert(self, table_name, row):
         table = self._get_table(table_name)
-
-        # Basic schema check
         missing = set(table["columns"]) - set(row.keys())
         if missing:
             raise ValueError(f"Missing columns: {missing}")
-
         table["rows"].append(row)
 
     def select_all(self, table_name):
         table = self._get_table(table_name)
-        return list(table["rows"])  # return a copy
+        return list(table["rows"])
 
     def select_where(self, table_name, predicate):
         table = self._get_table(table_name)
@@ -114,3 +110,15 @@ class TableManager:
             raise KeyError(f"Table '{name}' does not exist.")
         return self.tables[name]
 
+# API models
+class Item(BaseModel):
+    name: str
+    price: float
+
+@app.get("/users/{user_id}")
+def read_user(user_id: str):
+    return {"user_id": user_id}
+
+@app.post("/items/")
+def create_item(item: Item):
+    return item
