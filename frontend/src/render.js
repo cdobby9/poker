@@ -9,9 +9,18 @@ function el(html) {
 
 export function renderApp(root, state) {
   const table = state.table;
+  const me = state.me;
+  const seats = table?.seats ?? [];
+  const dealerUserId = table?.dealerUserId;
+  const dealerSeat = seats.find(s => s.userId === dealerUserId);
+  const actionLog = state.actionLog ?? [];
+  const gamePhase = table?.gamePhase ?? "waiting";
+  const currentPlayerUserId = table?.currentPlayerUserId;
 
   root.innerHTML = "";
-  root.appendChild(el(`
+  
+  // Create main structure with header
+  const mainEl = el(`
     <div class="app">
       <header class="header">
         <div class="header-left">
@@ -29,29 +38,65 @@ export function renderApp(root, state) {
             <span>Connected</span>
           </div>
         </div>
-        <div class="pill">WS: live</div>
       </header>
 
-      <section class="card">
-        <h2>Seats</h2>
-        <div class="seats" id="seats"></div>
-      </section>
+      <div class="table-container">
+        <div class="dealer-seat ${dealerSeat ? "occupied" : "empty"}">
+          <div class="dealer-label">D</div>
+        </div>
+        <div class="table">
+          <div class="community-cards" id="community-cards">
+            <div class="community-card"></div>
+            <div class="community-card"></div>
+            <div class="community-card"></div>
+            <div class="community-card"></div>
+            <div class="community-card"></div>
+          </div>
+          <div class="pot-display">
+            <div class="pot-label">POT</div>
+            <div class="pot-amount">$${table?.pot ?? 0}</div>
+          </div>
+          <div class="card-area card-seat-1"></div>
+          <div class="card-area card-seat-2"></div>
+          <div class="card-area card-seat-3"></div>
+          <div class="card-area card-seat-4"></div>
+          <div class="card-area card-seat-5"></div>
+          <div class="card-area card-seat-6"></div>
+          <div class="seats-grid" id="seats"></div>
+        </div>
+      </div>
 
-      <section class="card">
-        <h2>Last event</h2>
-        <p class="muted">${table?.lastEvent?.summary ?? "—"}</p>
-      </section>
+      <div class="controls-section">
+        <button class="btn btn-primary" id="start-game">Start Game</button>
+        <button class="btn btn-secondary" id="leave-table">Leave Table</button>
+        <button class="btn btn-secondary" id="settings">⚙️ Settings</button>
+      </div>
 
-      <section class="card">
-        <h2>Debug</h2>
-        <pre class="pre">${JSON.stringify(table, null, 2)}</pre>
-      </section>
+      <div class="actions-section" id="actions-section"></div>
+
+      <div class="info-row">
+        <div class="info-section">
+          <h3>Last Event</h3>
+          <p id="last-event">${table?.lastEvent?.summary ?? "Waiting for players..."}</p>
+        </div>
+        <div class="action-log">
+          <h3>Action Log</h3>
+          <div class="action-log-content" id="action-log"></div>
+        </div>
+      </div>
+
+      <div class="debug-section" id="debug"></div>
     </div>
-  `));
+  `);
+  
+  root.appendChild(mainEl);
 
+  // Render 6 player seats
   const seatsDiv = root.querySelector("#seats");
-
-  const seats = table?.seats ?? [];
+  
+  // Seat numbering: 1 is to the right of dealer, going clockwise
+  const seatNumberMap = [6, 1, 2, 3, 4, 5];
+  
   for (let i = 0; i < 6; i++) {
     const seat = seats[i];
     const taken = seat && seat.userId;
@@ -93,36 +138,6 @@ export function renderApp(root, state) {
     } else {
       node.querySelector("button").disabled = true;
     }
-
-  const mySeatIndex =
-    table?.seats?.find(s => s.userId === state.me?.userId)?.seatIndex ?? null;
-
-  const myPS =
-    table?.playerState?.find(p => p.seatIndex === mySeatIndex) ?? null;
-
-  const toCall = myPS ? Math.max(0, (table.currentBet || 0) - (myPS.betThisStreet || 0)) : 0;
-  const isMyTurn = table?.status === "IN_HAND" && mySeatIndex !== null && table.actingSeatIndex === mySeatIndex;
-
-const foldBtn = root.querySelector("#foldBtn");
-if (foldBtn) foldBtn.addEventListener("click", () => {
-  send("ACTION", { tableId: CONFIG.DEFAULT_TABLE_ID, action: "FOLD" });
-});
-
-const checkCallBtn = root.querySelector("#checkCallBtn");
-if (checkCallBtn) checkCallBtn.addEventListener("click", () => {
-  send("ACTION", { tableId: CONFIG.DEFAULT_TABLE_ID, action: toCall === 0 ? "CHECK" : "CALL" });
-});
-
-const raise10Btn = root.querySelector("#raise10Btn");
-if (raise10Btn) raise10Btn.addEventListener("click", () => {
-  send("ACTION", { tableId: CONFIG.DEFAULT_TABLE_ID, action: "RAISE", amount: 10 });
-});
-
-const raise50Btn = root.querySelector("#raise50Btn");
-if (raise50Btn) raise50Btn.addEventListener("click", () => {
-  send("ACTION", { tableId: CONFIG.DEFAULT_TABLE_ID, action: "RAISE", amount: 50 });
-});
-
 
     seatsDiv.appendChild(node);
   }

@@ -251,8 +251,22 @@ html, body {
   background: transparent;
 }
 
-.seat.open:hover {
-  transform: scale(1.08) !important;
+.seat-wrapper:nth-child(1) .seat.open:hover,
+.seat-wrapper:nth-child(2) .seat.open:hover {
+  transform: rotate(0deg) scale(1.08);
+}
+
+.seat-wrapper:nth-child(3) .seat.open:hover {
+  transform: rotate(90deg) scale(1.08);
+}
+
+.seat-wrapper:nth-child(4) .seat.open:hover,
+.seat-wrapper:nth-child(5) .seat.open:hover {
+  transform: rotate(180deg) scale(1.08);
+}
+
+.seat-wrapper:nth-child(6) .seat.open:hover {
+  transform: rotate(-90deg) scale(1.08);
 }
 
 .seat.taken {
@@ -283,6 +297,24 @@ html, body {
 .empty-label {
   color: var(--dim);
   font-weight: 500;
+}
+
+.seat-wrapper:nth-child(1) .empty-label,
+.seat-wrapper:nth-child(2) .empty-label {
+  transform: rotate(0deg) !important;
+}
+
+.seat-wrapper:nth-child(3) .empty-label {
+  transform: rotate(-90deg) !important;
+}
+
+.seat-wrapper:nth-child(4) .empty-label,
+.seat-wrapper:nth-child(5) .empty-label {
+  transform: rotate(-180deg) !important;
+}
+
+.seat-wrapper:nth-child(6) .empty-label {
+  transform: rotate(90deg) !important;
 }
 
 .seat-player-name {
@@ -346,30 +378,26 @@ html, body {
 }
 
 .blind-indicator {
-  font-size: 10px;
-  font-weight: 700;
-  color: #4ade80;
-  margin-top: 2px;
-  letter-spacing: 0.5px;
+  display: none;
 }
 
 /* Counter-rotate text to keep it upright */
 .seat-wrapper:nth-child(1) .seat-content,
 .seat-wrapper:nth-child(2) .seat-content {
-  transform: rotate(0deg);
+  transform: rotate(0deg) !important;
 }
 
 .seat-wrapper:nth-child(3) .seat-content {
-  transform: rotate(-90deg);
+  transform: rotate(-90deg) !important;
 }
 
 .seat-wrapper:nth-child(4) .seat-content,
 .seat-wrapper:nth-child(5) .seat-content {
-  transform: rotate(-180deg);
+  transform: rotate(-180deg) !important;
 }
 
 .seat-wrapper:nth-child(6) .seat-content {
-  transform: rotate(90deg);
+  transform: rotate(90deg) !important;
 }
 
 /* Adjust spacing for side seats */
