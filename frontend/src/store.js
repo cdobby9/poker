@@ -2,6 +2,7 @@ const state = {
   table: null,
   me: { userId: null, displayName: null },
   lastMsg: null,
+  actionLog: [],
 };
 
 const listeners = new Set();
@@ -18,4 +19,9 @@ export function setState(patch) {
 export function subscribe(fn) {
   listeners.add(fn);
   return () => listeners.delete(fn);
+}
+
+export function addAction(message) {
+  state.actionLog = [message, ...state.actionLog].slice(0, 20);
+  for (const fn of listeners) fn(state);
 }
