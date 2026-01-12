@@ -8,23 +8,23 @@ export function connectWS({ displayName }) {
 
   ws.onopen = () => {
     console.log("[WS] connected");
-
-    send("AUTH", {
-      token: "dev",        // dev only
-      displayName,
-    });
-
-    send("JOIN_TABLE", {
-      tableId: CONFIG.DEFAULT_TABLE_ID,
-    });
+    send("AUTH", { token: "dev", displayName });
+    send("JOIN_TABLE", { tableId: CONFIG.DEFAULT_TABLE_ID });
   };
 
-  ws.onmessage = (e) => {
+  ws.onmessage = async (e) => {
     try {
-      const msg = JSON.parse(e.data);
+      let data = e.data;
+
+      if (data instanceof Blob) {
+        data = await data.text();
+      }
+
+      const msg = typeof data === "string" ? JSON.parse(data) : data;
+
       if (onMessageCb) onMessageCb(msg);
     } catch (err) {
-      console.error("[WS] bad message", e.data);
+      console.error("[WS] bad message", e.data, err);
     }
   };
 

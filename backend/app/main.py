@@ -188,6 +188,40 @@ def bump_event(table: TableState, event_type: str, summary: str):
         "summary": summary,
     }
 
+def find_ps(table: TableState, seat_index: int) -> Optional[Dict[str, Any]]:
+    for ps in table.playerState:
+        if ps["seatIndex"] == seat_index:
+            return ps
+    return None
+
+
+def next_seat_in_hand(table: TableState, current: int) -> Optional[int]:
+    if not table.playersInHand:
+        return None
+
+    ordered = sorted(table.playersInHand)
+    if current not in ordered:
+        # fallback
+        for idx in ordered:
+            ps = find_ps(table, idx)
+            if ps and ps["inHand"] and (not ps["hasFolded"]) and (not ps["isAllIn"]):
+                return idx
+        return None
+
+    start_i = ordered.index(current)
+    for offset in range(1, len(ordered) + 1):
+        idx = ordered[(start_i + offset) % len(ordered)]
+        ps = find_ps(table, idx)
+        if ps and ps["inHand"] and (not ps["hasFolded"]) and (not ps["isAllIn"]):
+            return idx
+
+    return None
+
+
+def active_players(table: TableState) -> list[Dict[str, Any]]:
+    return [ps for ps in table.playerState if ps.get("inHand") and (not ps.get("hasFolded"))]
+
+
 
 
 # WS endpoint ----------------------------
@@ -313,6 +347,11 @@ async def ws_endpoint(ws: WebSocket):
                         seat.isConnected = True
                         bump_event(table, "PLAYER_TOOK_SEAT", f"{display_name} took seat {seat_index}")
                         await broadcast_state(table_id)
+                
+                if table.dealerUserId is None:
+                    table.dealerUserId = user_id
+                    bump_event(table, "DEALER_ASSIGNED", f"{display_name} is dealer")
+
 
                 continue
 
@@ -338,6 +377,163 @@ async def ws_endpoint(ws: WebSocket):
                     bump_event(table, "PLAYER_LEFT_SEAT", f"{display_name} left their seat")
                     await broadcast_state(table_id)
 
+                continue
+
+
+            # START_HAND ----------------------------
+
+            if msg_type == "START_HAND":
+                user_id = SESSIONS[ws]["userId"]
+                display_name = SESSIONS[ws]["displayName"]
+
+                if table.dealerUserId != user_id:
+                    await send_error(ws, "NOT_AUTHORIZED", "Only the dealer can start a hand.", request_id=request_id)
+                    continue
+
+                # Need at least 2 seated players
+                seated = [s for s in table.seats if s.userId is not None]
+                if len(seated) < 2:
+                    await send_error(ws, "INVALID_STATE", "Need at least 2 players seated.", request_id=request_id)
+                    continue
+
+                table.status = "IN_HAND"
+                table.handNumber += 1
+                table.street = "PREFLOP"
+                table.pot = 0
+                table.currentBet = 0
+                table.minRaiseTo = 0
+                table.communityCards = []
+
+                table.playersInHand = [s.seatIndex for s in seated]
+
+                table.playerState = []
+                for s in seated:
+                    table.playerState.append({
+                        "seatIndex": s.seatIndex,
+                        "inHand": True,
+                        "hasFolded": False,
+                        "isAllIn": False,
+                        "stack": s.chips,
+                        "betThisStreet": 0,
+                        "betThisHand": 0
+                    })
+
+                # ToDo: proper blinds - currently first player left of button
+                table.actingSeatIndex = min(table.playersInHand)
+
+                bump_event(table, "HAND_STARTED", f"Hand #{table.handNumber} started by {display_name}")
+                await broadcast_state(table_id)
+
+                continue
+
+            # ACTION ----------------------------
+            if msg_type == "ACTION":
+                user_id = SESSIONS[ws]["userId"]
+                display_name = SESSIONS[ws]["displayName"]
+
+                if table.status != "IN_HAND":
+                    await send_error(ws, "HAND_NOT_ACTIVE", "No hand is active.", request_id=request_id)
+                    continue
+
+                # find your seat
+                my_seat = None
+                for s in table.seats:
+                    if s.userId == user_id:
+                        my_seat = s.seatIndex
+                        break
+                if my_seat is None:
+                    await send_error(ws, "NOT_SEATED", "You must be seated to act.", request_id=request_id)
+                    continue
+
+                if table.actingSeatIndex != my_seat:
+                    await send_error(ws, "NOT_YOUR_TURN", "It is not your turn.", request_id=request_id)
+                    continue
+
+                ps = find_ps(table, my_seat)
+                if not ps or ps.get("hasFolded") or (not ps.get("inHand")):
+                    await send_error(ws, "INVALID_ACTION", "You cannot act right now.", request_id=request_id)
+                    continue
+
+                action = payload.get("action")
+                amount = payload.get("amount", 0)
+
+                to_call = max(0, int(table.currentBet) - int(ps["betThisStreet"]))
+
+                if action == "FOLD":
+                    ps["hasFolded"] = True
+                    bump_event(table, "PLAYER_ACTION", f"{display_name} folded")
+
+                elif action == "CHECK":
+                    if to_call != 0:
+                        await send_error(ws, "INVALID_ACTION", "Cannot check when facing a bet.", request_id=request_id)
+                        continue
+                    bump_event(table, "PLAYER_ACTION", f"{display_name} checked")
+
+                elif action == "CALL":
+                    pay = min(int(ps["stack"]), to_call)
+                    ps["stack"] -= pay
+                    ps["betThisStreet"] += pay
+                    ps["betThisHand"] += pay
+                    table.pot += pay
+                    if ps["stack"] == 0:
+                        ps["isAllIn"] = True
+                    bump_event(table, "PLAYER_ACTION", f"{display_name} called {pay}")
+
+                elif action in ("BET", "RAISE"):
+                    if not isinstance(amount, int) or amount <= 0:
+                        await send_error(ws, "INVALID_AMOUNT", "amount must be a positive integer.", request_id=request_id)
+                        continue
+
+                    # v1: amount = chips added in this action
+                    add = min(int(amount), int(ps["stack"]))
+                    ps["stack"] -= add
+                    ps["betThisStreet"] += add
+                    ps["betThisHand"] += add
+                    table.pot += add
+
+                    # update currentBet to highest betThisStreet
+                    if ps["betThisStreet"] > table.currentBet:
+                        table.currentBet = ps["betThisStreet"]
+
+                    if ps["stack"] == 0:
+                        ps["isAllIn"] = True
+
+                    bump_event(table, "PLAYER_ACTION", f"{display_name} raised {add}")
+
+                else:
+                    await send_error(ws, "INVALID_ACTION", "Unknown action.", request_id=request_id)
+                    continue
+
+                # if only one active player remains, end hand and award pot
+                actives = active_players(table)
+                if len(actives) == 1:
+                    winner = actives[0]
+                    win_seat = winner["seatIndex"]
+
+                    # return winnings to their seat chips: stack + pot
+                    for s in table.seats:
+                        if s.seatIndex == win_seat:
+                            s.chips = int(winner["stack"]) + int(table.pot)
+                            break
+
+                    table.status = "LOBBY"
+                    table.street = "NONE"
+                    table.communityCards = []
+                    table.currentBet = 0
+                    table.minRaiseTo = 0
+                    table.actingSeatIndex = None
+                    table.playersInHand = []
+                    table.playerState = []
+                    table.pot = 0
+
+                    bump_event(table, "HAND_ENDED", f"{display_name} wins (everyone folded)")
+                    await broadcast_state(table_id)
+                    continue
+
+                # rotate turn
+                table.actingSeatIndex = next_seat_in_hand(table, my_seat)
+                table.version += 1
+                await broadcast_state(table_id)
                 continue
 
             # Anything else for now

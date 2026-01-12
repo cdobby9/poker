@@ -788,3 +788,43 @@ html, body {
   background: var(--border);
   border-radius: 3px;
 }
+
+
+.btn {
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid #2a3a52;
+  background: #1b2533;
+  color: inherit;
+  cursor: pointer;
+}
+.btn:hover { border-color: #3b5274; }
+.btn:disabled { opacity: 0.6; cursor: not-allowed; }
+
+.actionbar {
+  position: sticky;
+  bottom: 12px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  padding: 10px;
+  border-radius: 14px;
+  background: rgba(16, 23, 34, 0.92);
+  border: 1px solid #223146;
+  backdrop-filter: blur(8px);
+}
+
+.actionbar button {
+  padding: 10px 10px;
+  border-radius: 12px;
+  border: 1px solid #2a3a52;
+  background: #0f1622;
+  color: inherit;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.actionbar button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
