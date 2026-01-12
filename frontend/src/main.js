@@ -30,6 +30,8 @@ onWSMessage((msg) => {
     console.warn("[ERROR]", msg.payload);
     alert(`${msg.payload.code}: ${msg.payload.message}`);
   }
+
+  if (msg.type === "AUTH_OK") setState({ me: msg.payload });
 });
 
 subscribe((state) => {
@@ -38,3 +40,4 @@ subscribe((state) => {
 
 // initial render
 renderApp(root, getState());
+
