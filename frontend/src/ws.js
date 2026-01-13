@@ -3,13 +3,12 @@ import { CONFIG } from "./config";
 let ws = null;
 let onMessageCb = null;
 
-export function connectWS({ displayName }) {
+export function connectWS({ displayName, token }) {
   ws = new WebSocket(CONFIG.WS_URL);
 
   ws.onopen = () => {
     console.log("[WS] connected");
-    send("AUTH", { token: "dev", displayName });
-    // Don't auto-join a table - let user choose from lobby
+    send("AUTH", {token, displayName, }); 
   };
 
   ws.onmessage = async (e) => {

@@ -1,3 +1,13 @@
+function getDevToken() {
+  let t = localStorage.getItem("devToken");
+  if (!t) {
+    t = crypto.randomUUID(); // unique per browser storage
+    localStorage.setItem("devToken", t);
+  }
+  return t;
+}
+
+
 import "./style.css";
 import { connectWS, onWSMessage, send } from "./ws";
 import { setState, subscribe, getState, addAction } from "./store";
@@ -13,7 +23,11 @@ const displayName =
 
 localStorage.setItem("displayName", displayName);
 
-connectWS({ displayName });
+connectWS({
+  displayName,
+  token: getDevToken(),
+});
+
 
 onWSMessage((msg) => {
   setState({ lastMsg: msg });
