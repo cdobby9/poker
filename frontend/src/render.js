@@ -72,11 +72,13 @@ function renderTable(root, state) {
   const table = state.table;
   const me = state.me;
   const seats = table?.seats ?? [];
+  const mySeatIndex = seats.findIndex(s => s?.userId && s.userId === me?.userId);
+  const isMyTurn = (mySeatIndex !== -1 && actingSeatIndex === mySeatIndex);
   const dealerUserId = table?.dealerUserId;
   const dealerSeat = seats.find(s => s.userId === dealerUserId);
   const actionLog = state.actionLog ?? [];
   const gamePhase = table?.gamePhase ?? "waiting";
-  const currentPlayerUserId = table?.currentPlayerUserId;
+  const actingSeatIndex = table?.actingSeatIndex ?? null;
 
   root.innerHTML = "";
   
@@ -132,6 +134,7 @@ function renderTable(root, state) {
   // Render 6 player seats
   const seatsDiv = root.querySelector("#seats");
   const myHoleCards = state.myHoleCards ?? [];
+  const psBySeat = new Map((table?.playerState ?? []).map(ps => [ps.seatIndex, ps]));
   const handInProgress = table?.status === "IN_HAND";
   
   // Seat numbering: 1 is to the right of dealer, going clockwise
@@ -141,15 +144,21 @@ function renderTable(root, state) {
     const seat = seats[i];
     const taken = seat && seat.userId;
     const isMySeat = taken && seat.userId === me?.userId;
-    const isCurrentTurn = taken && seat.userId === currentPlayerUserId;
+    const isCurrentTurn = taken && actingSeatIndex === i;
     const displaySeatNumber = seatNumberMap[i];
     const isInHand = taken && handInProgress && table?.playersInHand?.includes(i);
+    const ps = psBySeat.get(i);
+    const inHand = handInProgress && !!ps?.inHand;
+    const folded = !!ps?.hasFolded;
+    const allIn = !!ps?.isAllIn;
+    const betThisStreet = ps?.betThisStreet ?? 0;
+    const shownStack = handInProgress && ps ? ps.stack : seat.chips;
     
     // Determine blind indicator
     let blindIndicator = "";
     if (taken && seat.userId === dealerUserId) blindIndicator = "D";
-    else if (taken && table?.smallBlindUserId === seat.userId) blindIndicator = "SB";
-    else if (taken && table?.bigBlindUserId === seat.userId) blindIndicator = "BB";
+    else if (taken && table?.smallBlindSeatIndex === i) blindIndicator = "SB";
+    else if (taken && table?.bigBlindSeatIndex === i) blindIndicator = "BB";
 
     const node = el(`
       <div class="seat-wrapper ${isCurrentTurn ? "active-turn" : ""}" data-seat="${i}">
@@ -160,9 +169,11 @@ function renderTable(root, state) {
                  <div class="seat-status">
                    ${seat.folded ? '<span class="badge folded">FOLDED</span>' : ''}
                    ${seat.allIn ? '<span class="badge all-in">ALL IN</span>' : ''}
+                   ${folded ? `<div class="seat-status folded">FOLDED</div>` : ''}
+                   ${allIn ? `<div class="seat-status allin">ALL-IN</div>` : ''}
                  </div>
-                 <div class="seat-chips">$${seat.chips}</div>
-                 ${seat.currentBet > 0 ? `<div class="seat-bet">Bet: $${seat.currentBet}</div>` : ''}
+                 <div class="seat-chips">$${shownStack}</div>
+                 ${betThisStreet > 0 ? `<div class="seat-bet">Bet: $${betThisStreet}</div>` : ''}
                  ${blindIndicator ? `<div class="blind-indicator">${blindIndicator}</div>` : ''}
                </div>`
             : `<div class="empty-label">Seat ${displaySeatNumber}</div>`
@@ -209,7 +220,7 @@ function renderTable(root, state) {
 
   // Render action buttons (stub for now, will connect to backend)
   const actionsSection = root.querySelector("#actions-section");
-  if (me?.userId === currentPlayerUserId) {
+  if (isMyTurn) {
     actionsSection.innerHTML = `
       <div class="action-buttons">
         <button class="btn btn-action fold-btn" id="fold-btn">Fold</button>
@@ -289,6 +300,19 @@ function renderTable(root, state) {
     sidebar.classList.toggle("collapsed");
     sidebarToggle.textContent = sidebar.classList.contains("collapsed") ? "▶" : "◀";
   });
+
+  root.querySelector("#all-in-btn")?.addEventListener("click", () => {
+    const ps = psBySeat.get(mySeatIndex);
+    if (!ps) return;
+    send("ACTION", { tableId: table?.tableId, action: "RAISE", amount: ps.stack });
+  });
+
+  root.querySelector("#raise-btn")?.addEventListener("click", () => {
+    const amt = parseInt(prompt("Raise amount (chips to add):") || "0", 10);
+    if (amt > 0) send("ACTION", { tableId: table?.tableId, action: "RAISE", amount: amt });
+  });
+
+
 
   // Render action log
   const actionLogDiv = root.querySelector("#action-log");

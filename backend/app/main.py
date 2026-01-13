@@ -4,6 +4,7 @@ import json
 import random
 import time
 import uuid
+import hashlib
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional, Set
 
@@ -282,7 +283,9 @@ async def ws_endpoint(ws: WebSocket):
                     continue
 
                 # simple fake identity derived from token
-                user_id = make_id("usr")
+                token = payload.get("token")
+                stable = hashlib.sha256(token.encode("utf-8")).hexdigest()[:10]
+                user_id = f"usr_{stable}"
                 display_name = payload.get("displayName") or "Player"
                 SESSIONS[ws]["userId"] = user_id
                 SESSIONS[ws]["displayName"] = display_name
@@ -329,7 +332,8 @@ async def ws_endpoint(ws: WebSocket):
                 user_id = SESSIONS[ws]["userId"]
                 for seat in table.seats:
                     if seat.userId == user_id:
-                        seat.isConnected = True
+                        seat.isConnected = False
+                        bump_event(table, "PLAYER_DISCONNECTED", f"{seat.displayName} disconnected")
                 
                 # Check if current dealer is still valid (seated and connected)
                 dealer_valid = False
@@ -651,7 +655,10 @@ async def ws_endpoint(ws: WebSocket):
                     table.playerState = []
                     table.pot = 0
 
-                    bump_event(table, "HAND_ENDED", f"{display_name} wins (everyone folded)")
+                    winner = actives[0]
+                    win_seat = winner["seatIndex"]
+                    winner_name = next((s.displayName for s in table.seats if s.seatIndex == win_seat), "Winner")
+                    bump_event(table, "HAND_ENDED", f"{winner_name} wins (everyone folded)")
                     await broadcast_state(table_id)
                     continue
 

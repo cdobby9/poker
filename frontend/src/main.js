@@ -26,11 +26,16 @@ onWSMessage((msg) => {
   }
 
   if (msg.type === "TABLES_LIST") {
-    setState({ tables: msg.payload.tables, view: "lobby", table: null });
+    setState({ tables: msg.payload.tables, view: "lobby", table: null, myHoleCards: [] });
   }
 
   if (msg.type === "STATE") {
     setState({ table: msg.payload.table, view: "table" });
+    
+    if (msg.payload.table?.status !== "IN_HAND") {
+      setState({ myHoleCards: [] });
+    }
+
     if (msg.payload.table?.lastEvent?.summary) {
       addAction(msg.payload.table.lastEvent.summary);
     }

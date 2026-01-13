@@ -5,6 +5,7 @@ const state = {
   me: { userId: null, displayName: null },
   lastMsg: null,
   actionLog: [],
+  myHoleCards: [],
 };
 
 const listeners = new Set();
@@ -27,3 +28,4 @@ export function addAction(message) {
   state.actionLog = [message, ...state.actionLog].slice(0, 20);
   for (const fn of listeners) fn(state);
 }
+
