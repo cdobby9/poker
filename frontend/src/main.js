@@ -36,6 +36,11 @@ onWSMessage((msg) => {
     }
   }
 
+  if (msg.type === "HOLE_CARDS") {
+    setState({ myHoleCards: msg.payload.cards });
+    addAction(`🃏 You were dealt: ${msg.payload.cards.join(", ")}`);
+  }
+
   if (msg.type === "ERROR") {
     console.warn("[ERROR]", msg.payload);
     addAction(`✗ Error: ${msg.payload.message}`);

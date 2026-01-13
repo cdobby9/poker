@@ -109,13 +109,11 @@ function renderTable(root, state) {
             </div>
             <div class="seats-grid" id="seats"></div>
           </div>
+          <div class="dealer-controls-container" id="dealer-controls-container"></div>
         </div>
 
         <div class="bottom-section">
           <div class="actions-section" id="actions-section"></div>
-          <div class="controls-section">
-            <button class="btn btn-primary btn-sm" id="start-game">Start Hand</button>
-          </div>
         </div>
       </div>
 
@@ -133,6 +131,8 @@ function renderTable(root, state) {
 
   // Render 6 player seats
   const seatsDiv = root.querySelector("#seats");
+  const myHoleCards = state.myHoleCards ?? [];
+  const handInProgress = table?.status === "IN_HAND";
   
   // Seat numbering: 1 is to the right of dealer, going clockwise
   const seatNumberMap = [6, 1, 2, 3, 4, 5];
@@ -143,6 +143,7 @@ function renderTable(root, state) {
     const isMySeat = taken && seat.userId === me?.userId;
     const isCurrentTurn = taken && seat.userId === currentPlayerUserId;
     const displaySeatNumber = seatNumberMap[i];
+    const isInHand = taken && handInProgress && table?.playersInHand?.includes(i);
     
     // Determine blind indicator
     let blindIndicator = "";
@@ -168,6 +169,16 @@ function renderTable(root, state) {
           }
         </button>
         ${isCurrentTurn ? '<div class="turn-highlight"></div>' : ''}
+        ${isMySeat && myHoleCards.length > 0 ? `
+          <div class="player-hole-cards">
+            ${myHoleCards.map(card => `<div class="mini-card">${card}</div>`).join('')}
+          </div>
+        ` : isInHand && !isMySeat ? `
+          <div class="player-hole-cards">
+            <div class="mini-card card-back"></div>
+            <div class="mini-card card-back"></div>
+          </div>
+        ` : ''}
       </div>
     `);
 
@@ -180,6 +191,20 @@ function renderTable(root, state) {
     }
 
     seatsDiv.appendChild(node);
+  }
+
+  // Render community cards
+  const communityCardsDiv = root.querySelector("#community-cards");
+  const communityCards = table?.communityCards ?? [];
+  communityCardsDiv.innerHTML = "";
+  for (let i = 0; i < 5; i++) {
+    const card = communityCards[i];
+    const cardEl = el(`
+      <div class="community-card ${card ? '' : 'card-back'}">
+        ${card || ''}
+      </div>
+    `);
+    communityCardsDiv.appendChild(cardEl);
   }
 
   // Render action buttons (stub for now, will connect to backend)
@@ -221,12 +246,38 @@ function renderTable(root, state) {
     });
   }
 
-  // Add game control event listeners
-  root.querySelector("#start-game")?.addEventListener("click", () => {
-    console.log("Start game clicked");
-    send("START_HAND", { tableId: table?.tableId });
-  });
+  // Render dealer controls
+  const dealerControlsContainer = root.querySelector("#dealer-controls-container");
+  const isDealer = me?.userId === dealerUserId;
+  const seatedCount = seats.filter(s => s.userId).length;
+  const canStartHand = isDealer && seatedCount >= 2 && table?.status !== "IN_HAND";
+  
+  if (isDealer) {
+    dealerControlsContainer.innerHTML = `
+      <div class="dealer-controls">
+        <div class="dealer-badge">👑 DEALER CONTROLS</div>
+        <button 
+          class="btn btn-primary btn-deal" 
+          id="deal-btn"
+          ${!canStartHand ? 'disabled' : ''}
+          title="${!canStartHand && seatedCount < 2 ? 'Need at least 2 players' : !canStartHand && table?.status === 'IN_HAND' ? 'Hand already in progress' : 'Start a new hand'}">
+          🃏 Deal Hand
+        </button>
+        ${!canStartHand && seatedCount < 2 ? '<div class="dealer-hint">Waiting for players...</div>' : ''}
+        ${!canStartHand && table?.status === 'IN_HAND' ? '<div class="dealer-hint">Hand in progress</div>' : ''}
+      </div>
+    `;
+    
+    root.querySelector("#deal-btn")?.addEventListener("click", () => {
+      if (canStartHand) {
+        send("START_HAND", { tableId: table?.tableId });
+      }
+    });
+  } else {
+    if (dealerControlsContainer) dealerControlsContainer.innerHTML = "";
+  }
 
+  // Add game control event listeners
   root.querySelector("#leave-table")?.addEventListener("click", () => {
     send("LEAVE_TABLE", { tableId: table?.tableId });
   });
