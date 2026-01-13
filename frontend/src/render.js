@@ -40,7 +40,6 @@ function renderLobby(root, state) {
       <div class="table-card">
         <div class="table-card-header">
           <h3>${table.name}</h3>
-          <span class="table-status ${table.status.toLowerCase()}">${table.status}</span>
         </div>
         <div class="table-card-body">
           <button class="btn btn-primary join-btn" data-table-id="${table.tableId}">
@@ -81,73 +80,52 @@ function renderTable(root, state) {
 
   root.innerHTML = "";
   
-  // Create main structure with header
+  // Create main structure with action log sidebar
   const mainEl = el(`
-    <div class="app">
-      <header class="header">
-        <div class="header-left">
-          <h1>🎰 Poker</h1>
-          <p>Table: <strong>${table?.tableId ?? "—"}</strong> • You: <strong>${me?.displayName ?? "—"}</strong></p>
-        </div>
-        <div class="header-middle">
-          <div class="game-phase ${gamePhase}">
-            <span class="phase-label">${gamePhase.toUpperCase()}</span>
+    <div class="app table-view">
+      <div class="main-content">
+        <header class="header">
+          <div class="header-left">
+            <h1>🎰 ${table?.name ?? "Poker"}</h1>
+            <p>You: <strong>${me?.displayName ?? "—"}</strong></p>
           </div>
-        </div>
-        <div class="header-status">
-          <div class="status-indicator">
-            <div class="status-dot"></div>
-            <span>Connected</span>
+          <div class="header-right">
+            <button class="btn btn-secondary btn-sm" id="leave-table">Leave Table</button>
           </div>
-        </div>
-      </header>
+        </header>
 
-      <div class="table-container">
-        <div class="dealer-seat ${dealerSeat ? "occupied" : "empty"}">
-          <div class="dealer-label">D</div>
+        <div class="table-container">
+          <div class="table">
+            <div class="community-cards" id="community-cards">
+              <div class="community-card"></div>
+              <div class="community-card"></div>
+              <div class="community-card"></div>
+              <div class="community-card"></div>
+              <div class="community-card"></div>
+            </div>
+            <div class="pot-display">
+              <div class="pot-label">POT</div>
+              <div class="pot-amount">$${table?.pot ?? 0}</div>
+            </div>
+            <div class="seats-grid" id="seats"></div>
+          </div>
         </div>
-        <div class="table">
-          <div class="community-cards" id="community-cards">
-            <div class="community-card"></div>
-            <div class="community-card"></div>
-            <div class="community-card"></div>
-            <div class="community-card"></div>
-            <div class="community-card"></div>
+
+        <div class="bottom-section">
+          <div class="actions-section" id="actions-section"></div>
+          <div class="controls-section">
+            <button class="btn btn-primary btn-sm" id="start-game">Start Hand</button>
           </div>
-          <div class="pot-display">
-            <div class="pot-label">POT</div>
-            <div class="pot-amount">$${table?.pot ?? 0}</div>
-          </div>
-          <div class="card-area card-seat-1"></div>
-          <div class="card-area card-seat-2"></div>
-          <div class="card-area card-seat-3"></div>
-          <div class="card-area card-seat-4"></div>
-          <div class="card-area card-seat-5"></div>
-          <div class="card-area card-seat-6"></div>
-          <div class="seats-grid" id="seats"></div>
         </div>
       </div>
 
-      <div class="controls-section">
-        <button class="btn btn-primary" id="start-game">Start Game</button>
-        <button class="btn btn-secondary" id="leave-table">Leave Table</button>
-        <button class="btn btn-secondary" id="settings">⚙️ Settings</button>
-      </div>
-
-      <div class="actions-section" id="actions-section"></div>
-
-      <div class="info-row">
-        <div class="info-section">
-          <h3>Last Event</h3>
-          <p id="last-event">${table?.lastEvent?.summary ?? "Waiting for players..."}</p>
-        </div>
-        <div class="action-log">
+      <div class="sidebar" id="sidebar">
+        <div class="sidebar-header">
           <h3>Action Log</h3>
-          <div class="action-log-content" id="action-log"></div>
+          <button class="sidebar-toggle" id="sidebar-toggle">◀</button>
         </div>
+        <div class="action-log-content" id="action-log"></div>
       </div>
-
-      <div class="debug-section" id="debug"></div>
     </div>
   `);
   
@@ -246,34 +224,28 @@ function renderTable(root, state) {
   // Add game control event listeners
   root.querySelector("#start-game")?.addEventListener("click", () => {
     console.log("Start game clicked");
-    send("START_GAME", { tableId: table?.tableId });
+    send("START_HAND", { tableId: table?.tableId });
   });
 
   root.querySelector("#leave-table")?.addEventListener("click", () => {
     send("LEAVE_TABLE", { tableId: table?.tableId });
   });
 
-  root.querySelector("#settings")?.addEventListener("click", () => {
-    console.log("Settings clicked");
+  // Sidebar toggle functionality
+  const sidebar = root.querySelector("#sidebar");
+  const sidebarToggle = root.querySelector("#sidebar-toggle");
+  sidebarToggle?.addEventListener("click", () => {
+    sidebar.classList.toggle("collapsed");
+    sidebarToggle.textContent = sidebar.classList.contains("collapsed") ? "▶" : "◀";
   });
 
   // Render action log
   const actionLogDiv = root.querySelector("#action-log");
   actionLogDiv.innerHTML = actionLog
-    .slice(-5)
+    .slice(-20)
     .reverse()
     .map(log => `<div class="log-entry">${log}</div>`)
     .join("");
-
-  // Update last event
-  const lastEventDiv = root.querySelector("#last-event");
-  if (lastEventDiv && table?.lastEvent?.summary) {
-    lastEventDiv.textContent = table.lastEvent.summary;
-  }
-
-  // Render debug info
-  const debugDiv = root.querySelector("#debug");
-  debugDiv.textContent = JSON.stringify({ table, me, gamePhase }, null, 2);
 }
 
 export function renderApp(root, state) {

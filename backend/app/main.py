@@ -599,14 +599,19 @@ async def ws_endpoint(ws: WebSocket):
         if table_id and table_id in TABLE_SUBSCRIBERS:
             TABLE_SUBSCRIBERS[table_id].discard(ws)
 
-            # mark their seat disconnected if seated
+            # Remove player from their seat when they disconnect
             user_id = SESSIONS.get(ws, {}).get("userId")
             table = TABLES.get(table_id)
             if table and user_id:
                 for seat in table.seats:
                     if seat.userId == user_id:
+                        display_name = seat.displayName
+                        seat.userId = None
+                        seat.displayName = None
+                        seat.chips = 0
                         seat.isConnected = False
-                        bump_event(table, "PLAYER_DISCONNECTED", f"{seat.displayName} disconnected")
+                        seat.isSittingOut = False
+                        bump_event(table, "PLAYER_DISCONNECTED", f"{display_name} disconnected and left the table")
                         # broadcast disconnect
                         try:
                             await broadcast_state(table_id)
