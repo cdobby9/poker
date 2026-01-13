@@ -28,4 +28,3 @@ export function addAction(message) {
   state.actionLog = [message, ...state.actionLog].slice(0, 20);
   for (const fn of listeners) fn(state);
 }
-

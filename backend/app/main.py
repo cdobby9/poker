@@ -6,15 +6,12 @@ import time
 import uuid
 import hashlib
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional, Set
+from typing import Any, Dict, Optional, Set, List
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
-
-
 # App setup ----------------------------
-
 
 app = FastAPI()
 
@@ -29,6 +26,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
@@ -37,7 +35,6 @@ def health():
 # In-memory data ----------------------------
 
 def now_iso() -> str:
-    # simple ISO-ish (good enough for dev)
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
@@ -46,14 +43,13 @@ def make_id(prefix: str) -> str:
 
 
 def create_deck() -> list[str]:
-    """Create a standard 52-card deck."""
-    suits = ['h', 'd', 'c', 's']  # hearts, diamonds, clubs, spades
-    ranks = ['2', '3', '4', '5', '6', '7', '8', '9', 'T', 'J', 'Q', 'K', 'A']
+    """Create a standard 52-card deck. Uses 'Ah'/'Td' style codes."""
+    suits = ["h", "d", "c", "s"]
+    ranks = ["2", "3", "4", "5", "6", "7", "8", "9", "T", "J", "Q", "K", "A"]
     return [f"{rank}{suit}" for suit in suits for rank in ranks]
 
 
 def shuffle_deck(deck: list[str]) -> list[str]:
-    """Shuffle a deck in place and return it."""
     random.shuffle(deck)
     return deck
 
@@ -82,7 +78,7 @@ class Seat:
 class TableState:
     tableId: str
     name: str = "Friday Night Poker"
-    status: str = "LOBBY"
+    status: str = "LOBBY"  # LOBBY | IN_HAND
     maxSeats: int = 6
     createdAt: str = field(default_factory=now_iso)
 
@@ -91,12 +87,12 @@ class TableState:
 
     seats: list[Seat] = field(default_factory=list)
 
-    # gameplay fields (placeholders for now)
+    # gameplay fields
     buttonSeatIndex: Optional[int] = None
     smallBlindSeatIndex: Optional[int] = None
     bigBlindSeatIndex: Optional[int] = None
 
-    street: str = "NONE"
+    street: str = "NONE"  # NONE|PREFLOP|FLOP|TURN|RIVER|SHOWDOWN
     communityCards: list[str] = field(default_factory=list)
 
     pot: int = 0
@@ -109,9 +105,13 @@ class TableState:
     playersInHand: list[int] = field(default_factory=list)
     playerState: list[Dict[str, Any]] = field(default_factory=list)
 
-    holeCards: Dict[str, list[str]] = field(default_factory=dict) 
-    lastEvent: Dict[str, Any] = field(default_factory=dict)
+    # hole cards stored by userId (private messages send these)
+    holeCards: Dict[str, list[str]] = field(default_factory=dict)
 
+    # persisted deck for the current hand
+    deck: list[str] = field(default_factory=list)
+
+    lastEvent: Dict[str, Any] = field(default_factory=dict)
     version: int = 1
 
     def to_public(self) -> Dict[str, Any]:
@@ -176,15 +176,17 @@ async def send(ws: WebSocket, msg_type: str, payload: Dict[str, Any], request_id
     await ws.send_text(json.dumps(msg))
 
 
-async def send_error(ws: WebSocket, code: str, message: str, request_id: Optional[str] = None, details: Optional[Dict[str, Any]] = None):
+async def send_error(
+    ws: WebSocket,
+    code: str,
+    message: str,
+    request_id: Optional[str] = None,
+    details: Optional[Dict[str, Any]] = None,
+):
     await send(
         ws,
         "ERROR",
-        {
-            "code": code,
-            "message": message,
-            "details": details or {},
-        },
+        {"code": code, "message": message, "details": details or {}},
         request_id=request_id,
     )
 
@@ -212,6 +214,7 @@ def bump_event(table: TableState, event_type: str, summary: str):
         "summary": summary,
     }
 
+
 def find_ps(table: TableState, seat_index: int) -> Optional[Dict[str, Any]]:
     for ps in table.playerState:
         if ps["seatIndex"] == seat_index:
@@ -220,12 +223,12 @@ def find_ps(table: TableState, seat_index: int) -> Optional[Dict[str, Any]]:
 
 
 def next_seat_in_hand(table: TableState, current: int) -> Optional[int]:
+    """Next seat eligible to act (inHand, not folded, not all-in)."""
     if not table.playersInHand:
         return None
 
     ordered = sorted(table.playersInHand)
     if current not in ordered:
-        # fallback
         for idx in ordered:
             ps = find_ps(table, idx)
             if ps and ps["inHand"] and (not ps["hasFolded"]) and (not ps["isAllIn"]):
@@ -243,9 +246,94 @@ def next_seat_in_hand(table: TableState, current: int) -> Optional[int]:
 
 
 def active_players(table: TableState) -> list[Dict[str, Any]]:
+    """Players still in the hand (not folded). All-in counts as active."""
     return [ps for ps in table.playerState if ps.get("inHand") and (not ps.get("hasFolded"))]
 
 
+def reset_street_bets_and_actions(table: TableState):
+    for ps in table.playerState:
+        ps["betThisStreet"] = 0
+        ps["actedThisStreet"] = False
+    table.currentBet = 0
+    table.minRaiseTo = 0
+
+
+def betting_round_complete(table: TableState) -> bool:
+    """
+    Betting round is complete when every player who can act (inHand, not folded, not all-in)
+    has acted this street AND is not facing an unmatched bet.
+    """
+    for ps in table.playerState:
+        if not ps["inHand"] or ps["hasFolded"] or ps["isAllIn"]:
+            continue
+        if not ps.get("actedThisStreet", False):
+            return False
+        if ps["betThisStreet"] != table.currentBet:
+            return False
+    return True
+
+
+def advance_street(table: TableState):
+    """Advance street and deal community cards. Expects table.deck to be populated."""
+    # reset per-street bets/actions
+    reset_street_bets_and_actions(table)
+
+    if table.street == "PREFLOP":
+        table.street = "FLOP"
+        table.communityCards.extend([table.deck.pop(), table.deck.pop(), table.deck.pop()])
+        bump_event(table, "FLOP_DEALT", "Flop dealt")
+
+    elif table.street == "FLOP":
+        table.street = "TURN"
+        table.communityCards.append(table.deck.pop())
+        bump_event(table, "TURN_DEALT", "Turn dealt")
+
+    elif table.street == "TURN":
+        table.street = "RIVER"
+        table.communityCards.append(table.deck.pop())
+        bump_event(table, "RIVER_DEALT", "River dealt")
+
+    elif table.street == "RIVER":
+        table.street = "SHOWDOWN"
+        bump_event(table, "SHOWDOWN", "Showdown")
+
+
+def apply_player_stacks_to_seats(table: TableState):
+    """Write current in-hand stacks back to seat chips (so losses persist)."""
+    for ps in table.playerState:
+        seat = table.seats[ps["seatIndex"]]
+        seat.chips = int(ps["stack"])
+
+
+def end_hand_and_cleanup(
+    table: TableState,
+    table_id: str,
+    winner_seat_index: int,
+    win_amount: int,
+    win_reason: str,
+):
+    """Award pot to winner and reset hand state."""
+    # persist current stacks to seats first (so other players lose chips)
+    apply_player_stacks_to_seats(table)
+
+    # award winnings
+    winner_seat = table.seats[winner_seat_index]
+    winner_seat.chips = int(winner_seat.chips) + int(win_amount)
+
+    bump_event(table, "HAND_ENDED", f"{winner_seat.displayName} wins {win_amount} ({win_reason})")
+
+    # reset hand fields
+    table.status = "LOBBY"
+    table.street = "NONE"
+    table.communityCards = []
+    table.currentBet = 0
+    table.minRaiseTo = 0
+    table.actingSeatIndex = None
+    table.playersInHand = []
+    table.playerState = []
+    table.pot = 0
+    table.holeCards = {}
+    table.deck = []
 
 
 # WS endpoint ----------------------------
@@ -254,12 +342,7 @@ def active_players(table: TableState) -> list[Dict[str, Any]]:
 async def ws_endpoint(ws: WebSocket):
     await ws.accept()
 
-    # Create a session for this socket
-    SESSIONS[ws] = {
-        "userId": None,
-        "displayName": None,
-        "tableId": None,
-    }
+    SESSIONS[ws] = {"userId": None, "displayName": None, "tableId": None}
 
     try:
         while True:
@@ -273,20 +356,17 @@ async def ws_endpoint(ws: WebSocket):
                 await send_error(ws, "BAD_MESSAGE", "Invalid JSON message.")
                 continue
 
-            # --- AUTH (v1: we accept any token and fake identity) ---
+            # AUTH ----------------------------
             if msg_type == "AUTH":
-                # In v1 dev, accept token and generate userId/displayName.
-                # Later replace with real JWT validation via REST login.
                 token = payload.get("token")
                 if not token:
                     await send_error(ws, "NOT_AUTHENTICATED", "Missing token.", request_id=request_id)
                     continue
 
-                # simple fake identity derived from token
-                token = payload.get("token")
                 stable = hashlib.sha256(token.encode("utf-8")).hexdigest()[:10]
                 user_id = f"usr_{stable}"
                 display_name = payload.get("displayName") or "Player"
+
                 SESSIONS[ws]["userId"] = user_id
                 SESSIONS[ws]["displayName"] = display_name
 
@@ -298,24 +378,26 @@ async def ws_endpoint(ws: WebSocket):
                 await send_error(ws, "NOT_AUTHENTICATED", "Authenticate first using AUTH.", request_id=request_id)
                 continue
 
-            # --- LIST_TABLES ---
+            # LIST_TABLES ----------------------------
             if msg_type == "LIST_TABLES":
                 tables_list = []
                 for table_id, table in TABLES.items():
                     seated_players = sum(1 for s in table.seats if s.userId is not None)
                     player_names = [s.displayName for s in table.seats if s.userId is not None]
-                    tables_list.append({
-                        "tableId": table_id,
-                        "name": table.name,
-                        "status": table.status,
-                        "playerCount": seated_players,
-                        "maxSeats": table.maxSeats,
-                        "players": player_names,
-                    })
+                    tables_list.append(
+                        {
+                            "tableId": table_id,
+                            "name": table.name,
+                            "status": table.status,
+                            "playerCount": seated_players,
+                            "maxSeats": table.maxSeats,
+                            "players": player_names,
+                        }
+                    )
                 await send(ws, "TABLES_LIST", {"tables": tables_list}, request_id=request_id)
                 continue
 
-            # --- JOIN_TABLE ---
+            # JOIN_TABLE ----------------------------
             if msg_type == "JOIN_TABLE":
                 table_id = payload.get("tableId")
                 if not table_id:
@@ -323,39 +405,33 @@ async def ws_endpoint(ws: WebSocket):
                     continue
 
                 table = get_or_create_table(table_id)
-
-                # subscribe
                 TABLE_SUBSCRIBERS[table_id].add(ws)
                 SESSIONS[ws]["tableId"] = table_id
 
-                # mark connected if they already have a seat
                 user_id = SESSIONS[ws]["userId"]
+
+                # If they already have a seat, mark them connected
                 for seat in table.seats:
                     if seat.userId == user_id:
-                        seat.isConnected = False
-                        bump_event(table, "PLAYER_DISCONNECTED", f"{seat.displayName} disconnected")
-                
-                # Check if current dealer is still valid (seated and connected)
+                        seat.isConnected = True
+
+                # Ensure dealer is still seated (connected optional)
                 dealer_valid = False
                 if table.dealerUserId is not None:
                     for seat in table.seats:
-                        if seat.userId == table.dealerUserId and seat.isConnected:
+                        if seat.userId == table.dealerUserId:
                             dealer_valid = True
                             break
-                
-                # Clear dealer if invalid
                 if not dealer_valid:
                     table.dealerUserId = None
 
                 bump_event(table, "PLAYER_JOINED_TABLE", f"{SESSIONS[ws]['displayName']} joined table")
                 await broadcast_state(table_id)
-                
-                # If hand is in progress and user has hole cards, send them
+
+                # If hand is in progress, resend their hole cards if known
                 if table.status == "IN_HAND" and user_id in table.holeCards:
-                    await send(ws, "HOLE_CARDS", {
-                        "cards": table.holeCards[user_id]
-                    })
-                
+                    await send(ws, "HOLE_CARDS", {"cards": table.holeCards[user_id]})
+
                 continue
 
             # LEAVE_TABLE ----------------------------
@@ -368,7 +444,7 @@ async def ws_endpoint(ws: WebSocket):
                 table = TABLES[table_id]
                 user_id = SESSIONS[ws]["userId"]
                 display_name = SESSIONS[ws]["displayName"]
-                
+
                 # Remove player from their seat
                 for s in table.seats:
                     if s.userId == user_id:
@@ -385,20 +461,22 @@ async def ws_endpoint(ws: WebSocket):
 
                 bump_event(table, "PLAYER_LEFT_TABLE", f"{display_name} left table")
                 await broadcast_state(table_id)
-                
+
                 # Send updated table list back to user
                 tables_list = []
                 for tid, t in TABLES.items():
                     seated_players = sum(1 for s in t.seats if s.userId is not None)
                     player_names = [s.displayName for s in t.seats if s.userId is not None]
-                    tables_list.append({
-                        "tableId": tid,
-                        "name": t.name,
-                        "status": t.status,
-                        "playerCount": seated_players,
-                        "maxSeats": t.maxSeats,
-                        "players": player_names,
-                    })
+                    tables_list.append(
+                        {
+                            "tableId": tid,
+                            "name": t.name,
+                            "status": t.status,
+                            "playerCount": seated_players,
+                            "maxSeats": t.maxSeats,
+                            "players": player_names,
+                        }
+                    )
                 await send(ws, "TABLES_LIST", {"tables": tables_list}, request_id=request_id)
                 continue
 
@@ -422,7 +500,7 @@ async def ws_endpoint(ws: WebSocket):
                 user_id = SESSIONS[ws]["userId"]
                 display_name = SESSIONS[ws]["displayName"]
 
-                # If user already seated elsewhere, block for now (simpler v1)
+                # block if already seated
                 for s in table.seats:
                     if s.userId == user_id:
                         await send_error(ws, "ALREADY_SEATED", "You are already seated.", request_id=request_id)
@@ -434,23 +512,21 @@ async def ws_endpoint(ws: WebSocket):
                     else:
                         seat.userId = user_id
                         seat.displayName = display_name
-                        seat.chips = 1500  # dev default; later load from DB
+                        seat.chips = 1500
                         seat.isConnected = True
                         bump_event(table, "PLAYER_TOOK_SEAT", f"{display_name} took seat {seat_index}")
-                        
-                        # Check if current dealer is still seated
+
+                        # assign dealer if none exists or dealer left
                         dealer_still_seated = False
                         if table.dealerUserId is not None:
                             for s in table.seats:
                                 if s.userId == table.dealerUserId:
                                     dealer_still_seated = True
                                     break
-                        
-                        # Assign dealer if none exists or dealer left
                         if table.dealerUserId is None or not dealer_still_seated:
                             table.dealerUserId = user_id
                             bump_event(table, "DEALER_ASSIGNED", f"{display_name} is dealer")
-                        
+
                         await broadcast_state(table_id)
 
                 continue
@@ -474,7 +550,6 @@ async def ws_endpoint(ws: WebSocket):
                 if not removed:
                     await send_error(ws, "NOT_SEATED", "You are not seated.", request_id=request_id)
                 else:
-                    # If dealer left, reassign to first seated player
                     if table.dealerUserId == user_id:
                         table.dealerUserId = None
                         for s in table.seats:
@@ -482,15 +557,13 @@ async def ws_endpoint(ws: WebSocket):
                                 table.dealerUserId = s.userId
                                 bump_event(table, "DEALER_REASSIGNED", f"{s.displayName} is now dealer")
                                 break
-                    
+
                     bump_event(table, "PLAYER_LEFT_SEAT", f"{display_name} left their seat")
                     await broadcast_state(table_id)
 
                 continue
 
-
             # START_HAND ----------------------------
-
             if msg_type == "START_HAND":
                 user_id = SESSIONS[ws]["userId"]
                 display_name = SESSIONS[ws]["displayName"]
@@ -499,12 +572,12 @@ async def ws_endpoint(ws: WebSocket):
                     await send_error(ws, "NOT_AUTHORIZED", "Only the dealer can start a hand.", request_id=request_id)
                     continue
 
-                # Need at least 2 seated players
                 seated = [s for s in table.seats if s.userId is not None]
                 if len(seated) < 2:
                     await send_error(ws, "INVALID_STATE", "Need at least 2 players seated.", request_id=request_id)
                     continue
 
+                # reset hand state
                 table.status = "IN_HAND"
                 table.handNumber += 1
                 table.street = "PREFLOP"
@@ -517,40 +590,40 @@ async def ws_endpoint(ws: WebSocket):
 
                 table.playerState = []
                 for s in seated:
-                    table.playerState.append({
-                        "seatIndex": s.seatIndex,
-                        "inHand": True,
-                        "hasFolded": False,
-                        "isAllIn": False,
-                        "stack": s.chips,
-                        "betThisStreet": 0,
-                        "betThisHand": 0
-                    })
+                    table.playerState.append(
+                        {
+                            "seatIndex": s.seatIndex,
+                            "inHand": True,
+                            "hasFolded": False,
+                            "isAllIn": False,
+                            "stack": s.chips,
+                            "betThisStreet": 0,
+                            "betThisHand": 0,
+                            "actedThisStreet": False,
+                        }
+                    )
 
-                # Create and shuffle deck
-                deck = shuffle_deck(create_deck())
-                
-                # Deal 2 hole cards to each player
+                # create and persist deck
+                table.deck = shuffle_deck(create_deck())
+
+                # deal 2 hole cards per player (stored by userId)
                 table.holeCards = {}
                 for s in seated:
-                    card1 = deck.pop()
-                    card2 = deck.pop()
-                    table.holeCards[s.userId] = [card1, card2]
+                    c1 = table.deck.pop()
+                    c2 = table.deck.pop()
+                    table.holeCards[s.userId] = [c1, c2]
 
-                # ToDo: proper blinds - currently first player left of button
+                # v1 acting seat: smallest seat index in hand
                 table.actingSeatIndex = min(table.playersInHand)
 
                 bump_event(table, "HAND_STARTED", f"Hand #{table.handNumber} started by {display_name}")
                 await broadcast_state(table_id)
-                
-                # Send hole cards privately to each player
+
+                # send hole cards privately
                 for s in seated:
-                    # Find the websocket for this player
                     for player_ws in TABLE_SUBSCRIBERS[table_id]:
                         if SESSIONS.get(player_ws, {}).get("userId") == s.userId:
-                            await send(player_ws, "HOLE_CARDS", {
-                                "cards": table.holeCards[s.userId]
-                            })
+                            await send(player_ws, "HOLE_CARDS", {"cards": table.holeCards[s.userId]})
                             break
 
                 continue
@@ -590,12 +663,14 @@ async def ws_endpoint(ws: WebSocket):
 
                 if action == "FOLD":
                     ps["hasFolded"] = True
+                    ps["actedThisStreet"] = True
                     bump_event(table, "PLAYER_ACTION", f"{display_name} folded")
 
                 elif action == "CHECK":
                     if to_call != 0:
                         await send_error(ws, "INVALID_ACTION", "Cannot check when facing a bet.", request_id=request_id)
                         continue
+                    ps["actedThisStreet"] = True
                     bump_event(table, "PLAYER_ACTION", f"{display_name} checked")
 
                 elif action == "CALL":
@@ -606,6 +681,7 @@ async def ws_endpoint(ws: WebSocket):
                     table.pot += pay
                     if ps["stack"] == 0:
                         ps["isAllIn"] = True
+                    ps["actedThisStreet"] = True
                     bump_event(table, "PLAYER_ACTION", f"{display_name} called {pay}")
 
                 elif action in ("BET", "RAISE"):
@@ -613,56 +689,78 @@ async def ws_endpoint(ws: WebSocket):
                         await send_error(ws, "INVALID_AMOUNT", "amount must be a positive integer.", request_id=request_id)
                         continue
 
-                    # v1: amount = chips added in this action
                     add = min(int(amount), int(ps["stack"]))
                     ps["stack"] -= add
                     ps["betThisStreet"] += add
                     ps["betThisHand"] += add
                     table.pot += add
 
-                    # update currentBet to highest betThisStreet
+                    # update currentBet if this is now the highest
+                    raised_bet_to = table.currentBet
                     if ps["betThisStreet"] > table.currentBet:
-                        table.currentBet = ps["betThisStreet"]
+                        raised_bet_to = ps["betThisStreet"]
+                        table.currentBet = raised_bet_to
 
                     if ps["stack"] == 0:
                         ps["isAllIn"] = True
 
+                    # when someone bets/raises, everyone else needs to respond again:
+                    for other in table.playerState:
+                        if other["seatIndex"] != my_seat and other["inHand"] and (not other["hasFolded"]) and (not other["isAllIn"]):
+                            other["actedThisStreet"] = False
+
+                    ps["actedThisStreet"] = True
                     bump_event(table, "PLAYER_ACTION", f"{display_name} raised {add}")
 
                 else:
                     await send_error(ws, "INVALID_ACTION", "Unknown action.", request_id=request_id)
                     continue
 
-                # if only one active player remains, end hand and award pot
+                # If only one active player remains (everyone else folded), end immediately
                 actives = active_players(table)
                 if len(actives) == 1:
-                    winner = actives[0]
-                    win_seat = winner["seatIndex"]
+                    winner_ps = actives[0]
+                    win_seat = int(winner_ps["seatIndex"])
+                    win_amount = int(table.pot)
 
-                    # return winnings to their seat chips: stack + pot
-                    for s in table.seats:
-                        if s.seatIndex == win_seat:
-                            s.chips = int(winner["stack"]) + int(table.pot)
-                            break
-
-                    table.status = "LOBBY"
-                    table.street = "NONE"
-                    table.communityCards = []
-                    table.currentBet = 0
-                    table.minRaiseTo = 0
-                    table.actingSeatIndex = None
-                    table.playersInHand = []
-                    table.playerState = []
-                    table.pot = 0
-
-                    winner = actives[0]
-                    win_seat = winner["seatIndex"]
-                    winner_name = next((s.displayName for s in table.seats if s.seatIndex == win_seat), "Winner")
-                    bump_event(table, "HAND_ENDED", f"{winner_name} wins (everyone folded)")
+                    end_hand_and_cleanup(
+                        table,
+                        table_id,
+                        winner_seat_index=win_seat,
+                        win_amount=win_amount,
+                        win_reason="everyone folded",
+                    )
                     await broadcast_state(table_id)
                     continue
 
-                # rotate turn
+                # Street progression: if betting round is complete, advance street / showdown
+                if betting_round_complete(table):
+                    advance_street(table)
+
+                    if table.street == "SHOWDOWN":
+                        # Step 5 placeholder: pick a winner at random among remaining players.
+                        # Step 6: replace with evaluator library + pot-splitting.
+                        remaining = active_players(table)
+                        winner_ps = random.choice(remaining)
+                        win_seat = int(winner_ps["seatIndex"])
+                        win_amount = int(table.pot)
+
+                        end_hand_and_cleanup(
+                            table,
+                            table_id,
+                            winner_seat_index=win_seat,
+                            win_amount=win_amount,
+                            win_reason="showdown (placeholder)",
+                        )
+                        await broadcast_state(table_id)
+                        continue
+
+                    # after advancing street, set next actor to first eligible from current
+                    table.actingSeatIndex = next_seat_in_hand(table, my_seat) or table.actingSeatIndex
+                    await broadcast_state(table_id)
+                    continue
+
+                # rotate turn normally
                 table.actingSeatIndex = next_seat_in_hand(table, my_seat)
                 table.version += 1
                 await broadcast_state(table_id)
@@ -672,25 +770,18 @@ async def ws_endpoint(ws: WebSocket):
             await send_error(ws, "NOT_IMPLEMENTED", f"{msg_type} not implemented yet.", request_id=request_id)
 
     except WebSocketDisconnect:
-        # Cleanup: remove socket from any table subscription
+        # mark disconnected but DO NOT remove from seat
         table_id = SESSIONS.get(ws, {}).get("tableId")
         if table_id and table_id in TABLE_SUBSCRIBERS:
             TABLE_SUBSCRIBERS[table_id].discard(ws)
 
-            # Remove player from their seat when they disconnect
             user_id = SESSIONS.get(ws, {}).get("userId")
             table = TABLES.get(table_id)
             if table and user_id:
                 for seat in table.seats:
                     if seat.userId == user_id:
-                        display_name = seat.displayName
-                        seat.userId = None
-                        seat.displayName = None
-                        seat.chips = 0
                         seat.isConnected = False
-                        seat.isSittingOut = False
-                        bump_event(table, "PLAYER_DISCONNECTED", f"{display_name} disconnected and left the table")
-                        # broadcast disconnect
+                        bump_event(table, "PLAYER_DISCONNECTED", f"{seat.displayName} disconnected")
                         try:
                             await broadcast_state(table_id)
                         except Exception:
