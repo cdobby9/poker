@@ -73,12 +73,12 @@ function renderTable(root, state) {
   const me = state.me;
   const seats = table?.seats ?? [];
   const mySeatIndex = seats.findIndex(s => s?.userId && s.userId === me?.userId);
+  const actingSeatIndex = table?.actingSeatIndex ?? null;
   const isMyTurn = (mySeatIndex !== -1 && actingSeatIndex === mySeatIndex);
   const dealerUserId = table?.dealerUserId;
   const dealerSeat = seats.find(s => s.userId === dealerUserId);
   const actionLog = state.actionLog ?? [];
   const gamePhase = table?.gamePhase ?? "waiting";
-  const actingSeatIndex = table?.actingSeatIndex ?? null;
 
   root.innerHTML = "";
   
