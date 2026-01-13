@@ -121,9 +121,9 @@ html, body {
 .header-right {
   display: flex;
   gap: 8px;
-}
   font-size: 13px;
 }
+
 
 .header-status {
   display: flex;
@@ -743,7 +743,6 @@ html, body {
   gap: 8px;
   justify-content: center;
   flex-wrap: wrap;
-}
   animation: fade-in 0.3s ease-out;
 }
 
