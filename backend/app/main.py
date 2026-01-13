@@ -135,6 +135,15 @@ TABLE_SUBSCRIBERS: Dict[str, Set[WebSocket]] = {}
 # websocket -> session info
 SESSIONS: Dict[WebSocket, Dict[str, Any]] = {}
 
+# Initialize 3 default tables
+DEFAULT_TABLES = ["Table 1", "Table 2", "Table 3"]
+for i, name in enumerate(DEFAULT_TABLES):
+    table_id = f"tbl_{i+1}"
+    t = TableState(tableId=table_id, name=name)
+    t.seats = [Seat(seatIndex=j) for j in range(t.maxSeats)]
+    TABLES[table_id] = t
+    TABLE_SUBSCRIBERS[table_id] = set()
+
 
 def get_or_create_table(table_id: str) -> TableState:
     if table_id not in TABLES:
@@ -272,6 +281,23 @@ async def ws_endpoint(ws: WebSocket):
                 await send_error(ws, "NOT_AUTHENTICATED", "Authenticate first using AUTH.", request_id=request_id)
                 continue
 
+            # --- LIST_TABLES ---
+            if msg_type == "LIST_TABLES":
+                tables_list = []
+                for table_id, table in TABLES.items():
+                    seated_players = sum(1 for s in table.seats if s.userId is not None)
+                    player_names = [s.displayName for s in table.seats if s.userId is not None]
+                    tables_list.append({
+                        "tableId": table_id,
+                        "name": table.name,
+                        "status": table.status,
+                        "playerCount": seated_players,
+                        "maxSeats": table.maxSeats,
+                        "players": player_names,
+                    })
+                await send(ws, "TABLES_LIST", {"tables": tables_list}, request_id=request_id)
+                continue
+
             # --- JOIN_TABLE ---
             if msg_type == "JOIN_TABLE":
                 table_id = payload.get("tableId")
@@ -302,13 +328,41 @@ async def ws_endpoint(ws: WebSocket):
                     await send_error(ws, "TABLE_NOT_FOUND", "Table not found.", request_id=request_id)
                     continue
 
+                table = TABLES[table_id]
+                user_id = SESSIONS[ws]["userId"]
+                display_name = SESSIONS[ws]["displayName"]
+                
+                # Remove player from their seat
+                for s in table.seats:
+                    if s.userId == user_id:
+                        s.userId = None
+                        s.displayName = None
+                        s.chips = 0
+                        s.isConnected = False
+                        s.isSittingOut = False
+                        break
+
                 TABLE_SUBSCRIBERS[table_id].discard(ws)
                 if SESSIONS[ws].get("tableId") == table_id:
                     SESSIONS[ws]["tableId"] = None
 
-                table = TABLES[table_id]
-                bump_event(table, "PLAYER_LEFT_TABLE", f"{SESSIONS[ws]['displayName']} left table")
+                bump_event(table, "PLAYER_LEFT_TABLE", f"{display_name} left table")
                 await broadcast_state(table_id)
+                
+                # Send updated table list back to user
+                tables_list = []
+                for tid, t in TABLES.items():
+                    seated_players = sum(1 for s in t.seats if s.userId is not None)
+                    player_names = [s.displayName for s in t.seats if s.userId is not None]
+                    tables_list.append({
+                        "tableId": tid,
+                        "name": t.name,
+                        "status": t.status,
+                        "playerCount": seated_players,
+                        "maxSeats": t.maxSeats,
+                        "players": player_names,
+                    })
+                await send(ws, "TABLES_LIST", {"tables": tables_list}, request_id=request_id)
                 continue
 
             # require that they are in a table

@@ -1,4 +1,6 @@
 const state = {
+  view: "lobby", // 'lobby' or 'table'
+  tables: [],
   table: null,
   me: { userId: null, displayName: null },
   lastMsg: null,

@@ -9,7 +9,7 @@ export function connectWS({ displayName }) {
   ws.onopen = () => {
     console.log("[WS] connected");
     send("AUTH", { token: "dev", displayName });
-    send("JOIN_TABLE", { tableId: CONFIG.DEFAULT_TABLE_ID });
+    // Don't auto-join a table - let user choose from lobby
   };
 
   ws.onmessage = async (e) => {

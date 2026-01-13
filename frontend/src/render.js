@@ -7,7 +7,69 @@ function el(html) {
   return t.content.firstElementChild;
 }
 
-export function renderApp(root, state) {
+function renderLobby(root, state) {
+  const me = state.me;
+  const tables = state.tables ?? [];
+
+  root.innerHTML = "";
+
+  const lobbyEl = el(`
+    <div class="lobby">
+      <header class="lobby-header">
+        <h1>🎰 Poker Lobby</h1>
+        <p>Welcome, <strong>${me?.displayName ?? "—"}</strong></p>
+      </header>
+
+      <div class="lobby-content">
+        <h2>Select a Table</h2>
+        <div class="tables-grid" id="tables-grid"></div>
+      </div>
+    </div>
+  `);
+
+  root.appendChild(lobbyEl);
+
+  const tablesGrid = root.querySelector("#tables-grid");
+  
+  tables.forEach((table) => {
+    const playerList = table.players && table.players.length > 0 
+      ? table.players.map(p => `<li>${p}</li>`).join('')
+      : '<li class="empty-players">No players yet</li>';
+    
+    const tableCard = el(`
+      <div class="table-card">
+        <div class="table-card-header">
+          <h3>${table.name}</h3>
+          <span class="table-status ${table.status.toLowerCase()}">${table.status}</span>
+        </div>
+        <div class="table-card-body">
+          <button class="btn btn-primary join-btn" data-table-id="${table.tableId}">
+            Join Table
+          </button>
+        </div>
+        <div class="table-card-info">
+          <div class="info-row">
+            <span class="info-label">👥 Players:</span>
+            <span class="info-value">${table.playerCount} / ${table.maxSeats}</span>
+          </div>
+          <div class="players-list">
+            <div class="players-label">In Lobby:</div>
+            <ul>${playerList}</ul>
+          </div>
+        </div>
+      </div>
+    `);
+
+    const joinBtn = tableCard.querySelector(".join-btn");
+    joinBtn.addEventListener("click", () => {
+      send("JOIN_TABLE", { tableId: table.tableId });
+    });
+
+    tablesGrid.appendChild(tableCard);
+  });
+}
+
+function renderTable(root, state) {
   const table = state.table;
   const me = state.me;
   const seats = table?.seats ?? [];
@@ -133,7 +195,7 @@ export function renderApp(root, state) {
 
     if (!taken) {
       node.querySelector("button").addEventListener("click", () => {
-        send("TAKE_SEAT", { tableId: CONFIG.DEFAULT_TABLE_ID, seatIndex: i });
+        send("TAKE_SEAT", { tableId: table?.tableId, seatIndex: i });
       });
     } else {
       node.querySelector("button").disabled = true;
@@ -158,34 +220,37 @@ export function renderApp(root, state) {
     // Add stub event listeners
     root.querySelector("#fold-btn")?.addEventListener("click", () => {
       console.log("Fold clicked - ready to connect to backend");
-      send("FOLD", { tableId: CONFIG.DEFAULT_TABLE_ID });
+      send("ACTION", { tableId: table?.tableId, action: "FOLD" });
     });
     root.querySelector("#check-btn")?.addEventListener("click", () => {
       console.log("Check clicked - ready to connect to backend");
-      send("CHECK", { tableId: CONFIG.DEFAULT_TABLE_ID });
+      send("ACTION", { tableId: table?.tableId, action: "CHECK" });
     });
     root.querySelector("#call-btn")?.addEventListener("click", () => {
       console.log("Call clicked - ready to connect to backend");
-      send("CALL", { tableId: CONFIG.DEFAULT_TABLE_ID });
+      send("ACTION", { tableId: table?.tableId, action: "CALL" });
     });
     root.querySelector("#raise-btn")?.addEventListener("click", () => {
       console.log("Raise clicked - ready to connect to backend");
-      send("RAISE", { tableId: CONFIG.DEFAULT_TABLE_ID, amount: 100 });
+      send("ACTION", { tableId: table?.tableId, action: "RAISE", amount: 100 });
     });
     root.querySelector("#all-in-btn")?.addEventListener("click", () => {
       console.log("All In clicked - ready to connect to backend");
-      send("ALL_IN", { tableId: CONFIG.DEFAULT_TABLE_ID });
+      const mySeat = seats.find(s => s.userId === me?.userId);
+      if (mySeat) {
+        send("ACTION", { tableId: table?.tableId, action: "RAISE", amount: mySeat.chips });
+      }
     });
   }
 
   // Add game control event listeners
   root.querySelector("#start-game")?.addEventListener("click", () => {
     console.log("Start game clicked");
-    send("START_GAME", { tableId: CONFIG.DEFAULT_TABLE_ID });
+    send("START_GAME", { tableId: table?.tableId });
   });
 
   root.querySelector("#leave-table")?.addEventListener("click", () => {
-    send("LEAVE_TABLE", { tableId: CONFIG.DEFAULT_TABLE_ID });
+    send("LEAVE_TABLE", { tableId: table?.tableId });
   });
 
   root.querySelector("#settings")?.addEventListener("click", () => {
@@ -209,4 +274,12 @@ export function renderApp(root, state) {
   // Render debug info
   const debugDiv = root.querySelector("#debug");
   debugDiv.textContent = JSON.stringify({ table, me, gamePhase }, null, 2);
+}
+
+export function renderApp(root, state) {
+  if (state.view === "lobby") {
+    renderLobby(root, state);
+  } else {
+    renderTable(root, state);
+  }
 }

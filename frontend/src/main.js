@@ -1,5 +1,5 @@
 import "./style.css";
-import { connectWS, onWSMessage } from "./ws";
+import { connectWS, onWSMessage, send } from "./ws";
 import { setState, subscribe, getState, addAction } from "./store";
 import { renderApp } from "./render";
 
@@ -21,10 +21,16 @@ onWSMessage((msg) => {
   if (msg.type === "AUTH_OK") {
     setState({ me: msg.payload });
     addAction(`✓ Authenticated as ${msg.payload.displayName}`);
+    // Request table list after authentication
+    send("LIST_TABLES", {});
+  }
+
+  if (msg.type === "TABLES_LIST") {
+    setState({ tables: msg.payload.tables, view: "lobby", table: null });
   }
 
   if (msg.type === "STATE") {
-    setState({ table: msg.payload.table });
+    setState({ table: msg.payload.table, view: "table" });
     if (msg.payload.table?.lastEvent?.summary) {
       addAction(msg.payload.table.lastEvent.summary);
     }
@@ -35,8 +41,6 @@ onWSMessage((msg) => {
     addAction(`✗ Error: ${msg.payload.message}`);
     alert(`${msg.payload.code}: ${msg.payload.message}`);
   }
-
-  if (msg.type === "AUTH_OK") setState({ me: msg.payload });
 });
 
 subscribe((state) => {
