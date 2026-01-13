@@ -577,12 +577,12 @@ html, body {
 }
 
 /* Card area positions - in front of each seat on the table */
-.card-seat-1 { top: calc(20% - 40px); left: 27%; transform: rotate(90deg); }
-.card-seat-2 { top: calc(20% - 40px); right: 27%; transform: rotate(90deg); }
-.card-seat-3 { top: 36%; right: 10%; }
-.card-seat-4 { bottom: calc(20% - 40px); right: 27%; transform: rotate(90deg); }
-.card-seat-5 { bottom: calc(20% - 40px); left: 27%; transform: rotate(90deg); }
-.card-seat-6 { top: 36%; left: 10%; }
+.card-seat-1 { top: calc(20% - 60px); left: calc(27% - 40px); transform: rotate(90deg); }
+.card-seat-2 { top: calc(20% - 60px); right: calc(27% - 40px); transform: rotate(90deg); }
+.card-seat-3 { top: 36%; right: calc(10% - 20px); transform: rotate(90deg); }
+.card-seat-4 { bottom: calc(20% - 60px); right: calc(27% - 40px); transform: rotate(90deg); }
+.card-seat-5 { bottom: calc(20% - 60px); left: calc(27% - 40px); transform: rotate(90deg); }
+.card-seat-6 { top: 36%; left: calc(10% - 20px); transform: rotate(90deg); }
 
 .info-section {
   background: var(--bg-card);
